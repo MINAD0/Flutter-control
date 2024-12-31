@@ -76,7 +76,6 @@ flutter:
       - images/logo.png
       - images/logo.jpg
       - assets/CNN_fruits.tflite
-      - assets/CNN_fruits_updated.h5
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images
