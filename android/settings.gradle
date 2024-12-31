@@ -26,3 +26,5 @@ plugins {
 }
 
 include ":app"
+include ':tflite'
+project(':tflite').projectDir = new File(rootProject.projectDir, '../.pub-cache/hosted/pub.dev/tflite-1.1.2/android')
