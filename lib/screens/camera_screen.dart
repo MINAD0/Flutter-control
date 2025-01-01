@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
+import 'result_screen.dart';
+import 'dart:io';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 
 class CameraScreen extends StatefulWidget {
   final List<CameraDescription> cameras;
@@ -27,25 +31,70 @@ class _CameraScreenState extends State<CameraScreen> {
     super.dispose();
   }
 
-  Future<void> _takePicture() async {
-    try {
-      await _initializeControllerFuture;
+Future<void> _takePicture() async {
+  try {
+    await _initializeControllerFuture;
 
-      final image = await _controller.takePicture();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Picture saved at ${image.path}')),
-      );
-    } catch (e) {
-      print(e);
-    }
+    final image = await _controller.takePicture();
+
+    // Send image to Django backend for classification
+    var response = await _classifyImage(image.path);
+
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ResultScreen(
+          imagePath: image.path,
+          fruitName: response['label'] ?? 'Unknown',
+          confidence: response['confidence'] ?? 0.0,
+        ),
+      ),
+    );
+  } catch (e) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Failed to take picture: $e')),
+    );
   }
+}
+
+Future<Map<String, dynamic>> _classifyImage(String imagePath) async {
+  try {
+    var uri = Uri.parse('http://127.0.0.1:8000/api/predict/');
+    var request = http.MultipartRequest('POST', uri);
+    request.files.add(await http.MultipartFile.fromPath('file', imagePath));
+
+    var response = await request.send();
+
+    if (response.statusCode == 200) {
+      final res = await http.Response.fromStream(response);
+      final data = json.decode(res.body);
+
+      print('API Response: $data');
+
+      return {
+        'fruit': data['fruit'] ?? 'Unknown',
+        'confidence': data['confidence'] ?? 0.0,
+      };
+    } else {
+      throw Exception('Failed to classify image: ${response.statusCode}');
+    }
+  } catch (e) {
+    print('Error: $e');
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Error during classification: $e')),
+    );
+    return {'fruit': 'Error', 'confidence': 0.0};
+  }
+}
+
+
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Camera'),
-        backgroundColor: const Color(0xFF4A90E2),
+        backgroundColor: const Color(0xFF50E3C2),
       ),
       body: FutureBuilder<void>(
         future: _initializeControllerFuture,

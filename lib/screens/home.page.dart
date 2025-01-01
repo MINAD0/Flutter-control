@@ -3,10 +3,16 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:camera/camera.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
-import 'package:tflite/tflite.dart';
+import 'package:flutter/foundation.dart'; // For kIsWeb
+
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+import 'dart:typed_data';
+
 
 import 'camera_screen.dart';
 import 'profile_screen.dart';
+import 'result_screen.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -16,10 +22,9 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  File? _selectedImage; // Pour stocker l'image sélectionnée
-  String? _predictionResult; // Pour stocker le résultat de la prédiction
+  String? _selectedImagePath;
 
-  /// 📷 Ouvrir la caméra
+  /// 📷 Open Camera
   Future<void> _openCamera(BuildContext context) async {
     try {
       final cameras = await availableCameras();
@@ -30,50 +35,92 @@ class _HomePageState extends State<HomePage> {
         ),
       );
     } catch (e) {
-      print('Error initializing camera: $e');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Failed to open camera: $e')),
       );
     }
   }
 
-  /// 🖼️ Sélectionner une image depuis la galerie
-  Future<void> _pickImage() async {
-    final picker = ImagePicker();
-    final pickedFile = await picker.pickImage(source: ImageSource.gallery);
+  /// 🖼️ Pick Image from Gallery
+Future<void> _pickImage() async {
+  final picker = ImagePicker();
+  final pickedFile = await picker.pickImage(source: ImageSource.gallery);
 
-    if (pickedFile != null) {
-      setState(() {
-        _selectedImage = File(pickedFile.path);
-        _predictionResult = null; // Réinitialiser le résultat précédent
-      });
-      _classifyImage(pickedFile.path);
+  if (pickedFile != null) {
+    setState(() {
+      _selectedImagePath = pickedFile.path;
+    });
+
+    try {
+      var uri = Uri.parse('http://127.0.0.1:8000/api/predict/');
+      var request = http.MultipartRequest('POST', uri);
+
+      if (kIsWeb) {
+        // Upload Image for Web (as bytes)
+        final bytes = await pickedFile.readAsBytes();
+        request.files.add(
+          http.MultipartFile.fromBytes(
+            'file',
+            bytes,
+            filename: pickedFile.name,
+          ),
+        );
+      } else {
+        // Upload Image for Mobile (as file path)
+        request.files.add(
+          await http.MultipartFile.fromPath('file', pickedFile.path),
+        );
+      }
+
+      var response = await request.send();
+
+      if (response.statusCode == 200) {
+        final res = await http.Response.fromStream(response);
+        final data = json.decode(res.body);
+
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => ResultScreen(
+              imagePath: pickedFile.path,
+              fruitName: data['fruit'] ?? 'Unknown',
+              confidence: data['confidence'] ?? 0.0,
+            ),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to classify image. Status code: ${response.statusCode}')),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error during classification: $e')),
+      );
     }
   }
-
-  /// 🧠 Classifier l'image avec le modèle TFLite
-  Future<void> _classifyImage(String imagePath) async {
-    try {
-      var recognitions = await Tflite.runModelOnImage(
-        path: imagePath,
-        imageMean: 0.0,
-        imageStd: 255.0,
-        numResults: 6,
-        threshold: 0.5,
+}
+  /// 🖼️ Handle Image Rendering for Web and Mobile
+  Widget _renderImage(String path) {
+    if (kIsWeb) {
+      return Image.network(
+        path,
+        height: 200,
+        width: double.infinity,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) {
+          return const Icon(Icons.error, size: 100, color: Colors.red);
+        },
       );
-
-      setState(() {
-        if (recognitions != null && recognitions.isNotEmpty) {
-          _predictionResult =
-              "${recognitions[0]['label']} (${(recognitions[0]['confidence'] * 100).toStringAsFixed(2)}%)";
-        } else {
-          _predictionResult = "Aucune prédiction trouvée.";
-        }
-      });
-    } catch (e) {
-      print("Erreur lors de la classification : $e");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Erreur lors de la classification : $e')),
+    } else {
+      return Image.file(
+        File(path),
+        height: 200,
+        width: double.infinity,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) {
+          return const Icon(Icons.error, size: 100, color: Colors.red);
+        },
       );
     }
   }
@@ -83,12 +130,13 @@ class _HomePageState extends State<HomePage> {
     final user = FirebaseAuth.instance.currentUser;
 
     return Scaffold(
+      backgroundColor: const Color(0xFFF9FAFB),
       appBar: AppBar(
         backgroundColor: const Color(0xFF50E3C2),
         centerTitle: true,
         title: const Text(
-          "Home Page",
-          style: TextStyle(fontSize: 30, color: Colors.white),
+          "Fruit Detector 🍎",
+          style: TextStyle(fontSize: 26, color: Colors.white),
         ),
       ),
       drawer: Drawer(
@@ -117,13 +165,13 @@ class _HomePageState extends State<HomePage> {
               ),
             ),
             ListTile(
-              leading: const Icon(Icons.home),
+              leading: const Icon(Icons.history),
               title: const Text('History'),
               onTap: () {
                 Navigator.pop(context);
               },
             ),
-            const Divider(color: Color(0xFF50E3C2)),
+            const Divider(),
             ListTile(
               leading: const Icon(Icons.account_circle),
               title: const Text('Profile'),
@@ -135,7 +183,7 @@ class _HomePageState extends State<HomePage> {
                 );
               },
             ),
-            const Divider(color: Color(0xFF50E3C2)),
+            const Divider(),
             ListTile(
               leading: const Icon(Icons.logout),
               title: const Text('Logout'),
@@ -147,35 +195,70 @@ class _HomePageState extends State<HomePage> {
           ],
         ),
       ),
-      body: SingleChildScrollView(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const SizedBox(height: 20),
-            const Text(
-              "Welcome to the fruits detector!!",
-              style: TextStyle(fontSize: 30, color: Colors.blueGrey),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 30),
-            ElevatedButton.icon(
-              onPressed: _pickImage,
-              icon: const Icon(Icons.upload_file),
-              label: const Text("Upload Image for Prediction"),
-            ),
-            const SizedBox(height: 20),
-            if (_selectedImage != null) ...[
-              Image.file(_selectedImage!, height: 200),
-              const SizedBox(height: 10),
-            ],
-            if (_predictionResult != null) ...[
-              Text(
-                "Prediction: $_predictionResult",
-                style: const TextStyle(
-                    fontSize: 20, fontWeight: FontWeight.bold),
+      body: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 40),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              const Text(
+                "Welcome to the Fruit Detector! 🍌🍓🍍",
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.blueGrey,
+                ),
+                textAlign: TextAlign.center,
               ),
+              const SizedBox(height: 30),
+              ElevatedButton.icon(
+                onPressed: _pickImage,
+                icon: const Icon(Icons.photo_library),
+                label: const Text("Upload Image for Prediction"),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.greenAccent,
+                  padding:
+                      const EdgeInsets.symmetric(vertical: 14, horizontal: 20),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(15),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+              ElevatedButton.icon(
+                onPressed: () => _openCamera(context),
+                icon: const Icon(Icons.camera_alt),
+                label: const Text("Open Camera"),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blueAccent,
+                  padding:
+                      const EdgeInsets.symmetric(vertical: 14, horizontal: 20),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(15),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 30),
+              if (_selectedImagePath != null)
+                Container(
+                  margin: const EdgeInsets.only(top: 20),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(15),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Colors.grey,
+                        blurRadius: 5,
+                        spreadRadius: 1,
+                      ),
+                    ],
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(15),
+                    child: _renderImage(_selectedImagePath!),
+                  ),
+                ),
             ],
-          ],
+          ),
         ),
       ),
       floatingActionButton: FloatingActionButton(
@@ -183,7 +266,6 @@ class _HomePageState extends State<HomePage> {
         onPressed: () => _openCamera(context),
         child: const Icon(Icons.camera_alt, color: Colors.white),
       ),
-      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
     );
   }
 }
