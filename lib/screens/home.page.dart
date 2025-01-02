@@ -4,15 +4,13 @@ import 'package:camera/camera.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
 import 'package:flutter/foundation.dart'; // For kIsWeb
-
 import 'package:http/http.dart' as http;
 import 'dart:convert';
-import 'dart:typed_data';
-
 
 import 'camera_screen.dart';
 import 'profile_screen.dart';
 import 'result_screen.dart';
+import 'history_screen.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -23,105 +21,114 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   String? _selectedImagePath;
+  List<Map<String, dynamic>> _history = []; // Store history of results
 
   /// 📷 Open Camera
-  Future<void> _openCamera(BuildContext context) async {
-    try {
-      final cameras = await availableCameras();
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => CameraScreen(cameras: cameras),
-        ),
-      );
-    } catch (e) {
+Future<void> _openCamera(BuildContext context) async {
+  try {
+    final cameras = await availableCameras();
+
+    if (cameras.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to open camera: $e')),
+        const SnackBar(content: Text('No camera found on this device.')),
       );
+      return;
     }
-  }
 
-  /// 🖼️ Pick Image from Gallery
-Future<void> _pickImage() async {
-  final picker = ImagePicker();
-  final pickedFile = await picker.pickImage(source: ImageSource.gallery);
+    CameraController controller =
+        CameraController(cameras[0], ResolutionPreset.medium);
 
-  if (pickedFile != null) {
-    setState(() {
-      _selectedImagePath = pickedFile.path;
-    });
+    await controller.initialize();
 
-    try {
-      var uri = Uri.parse('http://127.0.0.1:8000/api/predict/');
-      var request = http.MultipartRequest('POST', uri);
-
-      if (kIsWeb) {
-        // Upload Image for Web (as bytes)
-        final bytes = await pickedFile.readAsBytes();
-        request.files.add(
-          http.MultipartFile.fromBytes(
-            'file',
-            bytes,
-            filename: pickedFile.name,
-          ),
-        );
-      } else {
-        // Upload Image for Mobile (as file path)
-        request.files.add(
-          await http.MultipartFile.fromPath('file', pickedFile.path),
-        );
-      }
-
-      var response = await request.send();
-
-      if (response.statusCode == 200) {
-        final res = await http.Response.fromStream(response);
-        final data = json.decode(res.body);
-
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => ResultScreen(
-              imagePath: pickedFile.path,
-              fruitName: data['fruit'] ?? 'Unknown',
-              confidence: data['confidence'] ?? 0.0,
-            ),
-          ),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to classify image. Status code: ${response.statusCode}')),
-        );
-      }
-    } catch (e) {
+    if (!controller.value.isInitialized) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error during classification: $e')),
+        const SnackBar(content: Text('Failed to initialize the camera.')),
       );
+      return;
     }
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => CameraScreen(cameras: cameras),
+      ),
+    );
+  } catch (e) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+          content: Text(
+              'Failed to open camera. Please check permissions or restart the device. Error: $e')),
+    );
+    debugPrint('Camera error: $e');
   }
 }
-  /// 🖼️ Handle Image Rendering for Web and Mobile
-  Widget _renderImage(String path) {
-    if (kIsWeb) {
-      return Image.network(
-        path,
-        height: 200,
-        width: double.infinity,
-        fit: BoxFit.cover,
-        errorBuilder: (context, error, stackTrace) {
-          return const Icon(Icons.error, size: 100, color: Colors.red);
-        },
-      );
-    } else {
-      return Image.file(
-        File(path),
-        height: 200,
-        width: double.infinity,
-        fit: BoxFit.cover,
-        errorBuilder: (context, error, stackTrace) {
-          return const Icon(Icons.error, size: 100, color: Colors.red);
-        },
-      );
+
+
+  /// 🖼️ Pick Image from Gallery
+  Future<void> _pickImage() async {
+    final picker = ImagePicker();
+    final pickedFile = await picker.pickImage(source: ImageSource.gallery);
+
+    if (pickedFile != null) {
+      setState(() {
+        _selectedImagePath = pickedFile.path;
+      });
+
+      try {
+        var uri = Uri.parse('http://127.0.0.1:8000/api/predict/');
+        var request = http.MultipartRequest('POST', uri);
+
+        if (kIsWeb) {
+          final bytes = await pickedFile.readAsBytes();
+          request.files.add(
+            http.MultipartFile.fromBytes(
+              'file',
+              bytes,
+              filename: pickedFile.name,
+            ),
+          );
+        } else {
+          request.files.add(
+            await http.MultipartFile.fromPath('file', pickedFile.path),
+          );
+        }
+
+        var response = await request.send();
+
+        if (response.statusCode == 200) {
+          final res = await http.Response.fromStream(response);
+          final data = json.decode(res.body);
+
+          setState(() {
+            _history.add({
+              'imagePath': pickedFile.path,
+              'fruitName': data['fruit'] ?? 'Unknown',
+              'confidence': data['confidence'] ?? 0.0,
+            });
+          });
+
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => ResultScreen(
+                imagePath: pickedFile.path,
+                fruitName: data['fruit'] ?? 'Unknown',
+                confidence: data['confidence'] ?? 0.0,
+              ),
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+                content: Text(
+                    'Failed to classify image. Status code: ${response.statusCode}')),
+          );
+        }
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error during classification: $e')),
+        );
+      }
     }
   }
 
@@ -165,10 +172,23 @@ Future<void> _pickImage() async {
               ),
             ),
             ListTile(
+              leading: const Icon(Icons.home),
+              title: const Text('Home'),
+              onTap: () {
+                Navigator.pop(context);
+              },
+            ),
+            const Divider(),
+            ListTile(
               leading: const Icon(Icons.history),
               title: const Text('History'),
               onTap: () {
-                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => HistoryScreen(history: _history),
+                  ),
+                );
               },
             ),
             const Divider(),
@@ -216,11 +236,10 @@ Future<void> _pickImage() async {
                 icon: const Icon(Icons.photo_library),
                 label: const Text("Upload Image for Prediction"),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.greenAccent,
                   padding:
                       const EdgeInsets.symmetric(vertical: 14, horizontal: 20),
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(15),
+                    borderRadius: BorderRadius.circular(12),
                   ),
                 ),
               ),
@@ -230,41 +249,16 @@ Future<void> _pickImage() async {
                 icon: const Icon(Icons.camera_alt),
                 label: const Text("Open Camera"),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.blueAccent,
                   padding:
                       const EdgeInsets.symmetric(vertical: 14, horizontal: 20),
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(15),
+                    borderRadius: BorderRadius.circular(12),
                   ),
                 ),
               ),
-              const SizedBox(height: 30),
-              if (_selectedImagePath != null)
-                Container(
-                  margin: const EdgeInsets.only(top: 20),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(15),
-                    boxShadow: const [
-                      BoxShadow(
-                        color: Colors.grey,
-                        blurRadius: 5,
-                        spreadRadius: 1,
-                      ),
-                    ],
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(15),
-                    child: _renderImage(_selectedImagePath!),
-                  ),
-                ),
             ],
           ),
         ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        backgroundColor: const Color(0xFF50E3C2),
-        onPressed: () => _openCamera(context),
-        child: const Icon(Icons.camera_alt, color: Colors.white),
       ),
     );
   }

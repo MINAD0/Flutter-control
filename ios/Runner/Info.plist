@@ -50,5 +50,11 @@
 	<string>We need access to your photo library for image classification.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>We need access to your camera for capturing images.</string>
+
+	<key>NSCameraUsageDescription</key>
+	<string>We need access to your camera for image capture.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>We need access to your microphone for audio recording.</string>
+
 </dict>
 </plist>
