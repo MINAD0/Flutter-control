@@ -1,3 +1,4 @@
+
 # 🍎 Fruit Detector Flutter App
 
 Welcome to the Fruit Detector App! This Flutter application allows users to detect fruits from images using machine learning and displays predictions with confidence scores. The app is integrated with Firebase for authentication and a Django backend for image classification.
